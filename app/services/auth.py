@@ -15,7 +15,7 @@ from app.models import User
 from app.schemas.auth import LoginRequest, TokenResponse, UserOut
 from spend_control_shared.auth import JWTClaims
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt_sha256", "bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer()
 
 
@@ -88,4 +88,3 @@ def require_roles(*roles: str) -> Callable[[UserOut], UserOut]:
         return current_user
 
     return dependency
-
