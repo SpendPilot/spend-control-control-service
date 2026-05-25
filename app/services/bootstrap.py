@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
-from app.models import ApprovalStep, PolicyRule, Role, User
+from app.models import ApprovalStep, AuthSession, PolicyRule, Role, User
 from app.services.auth import hash_password
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,7 @@ def ensure_control_bootstrap() -> None:
         tables=[
             Role.__table__,
             User.__table__,
+            AuthSession.__table__,
             PolicyRule.__table__,
             ApprovalStep.__table__,
         ],

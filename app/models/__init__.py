@@ -52,6 +52,19 @@ class PolicyRule(Base):
     )
 
 
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    __table_args__ = {"schema": "control"}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("control.users.id"), index=True)
+    token: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped[User] = relationship(lazy="joined")
+
+
 class ApprovalStep(Base):
     __tablename__ = "approval_steps"
     __table_args__ = {"schema": "control"}

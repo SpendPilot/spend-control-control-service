@@ -1,22 +1,19 @@
 from __future__ import annotations
 
-import logging
+import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.models import User
+from app.models import AuthSession, User
 from app.schemas.auth import LoginRequest, TokenResponse, UserOut
-from spend_control_shared.auth import JWTClaims
 
-logger = logging.getLogger(__name__)
 pwd_context = CryptContext(schemes=["bcrypt_sha256", "bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer()
 
@@ -29,35 +26,20 @@ def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def _jwt_secret_candidates() -> list[str]:
-    settings = get_settings()
-    candidates: list[str] = []
-    for raw_secret in settings.jwt_secret_key.split(","):
-        secret = raw_secret.strip()
-        if secret and secret not in candidates:
-            candidates.append(secret)
-    return candidates
-
-
-def _encode_access_token(user: User) -> str:
+def _issue_access_token(db: Session, user: User) -> str:
     settings = get_settings()
     expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_expire_minutes)
-    payload = {
-        "sub": user.email,
-        "email": user.email,
-        "role": user.role.name,
-        "user_id": user.id,
-        "department_id": user.department_id,
-        "exp": int(expire.timestamp()),
-    }
-    return jwt.encode(payload, _jwt_secret_candidates()[0], algorithm=settings.jwt_algorithm)
+    token = secrets.token_urlsafe(48)
+    db.add(AuthSession(user_id=user.id, token=token, expires_at=expire))
+    db.commit()
+    return token
 
 
 def login_user(db: Session, payload: LoginRequest) -> TokenResponse:
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    return TokenResponse(access_token=_encode_access_token(user), user=_to_user_out(user))
+    return TokenResponse(access_token=_issue_access_token(db, user), user=_to_user_out(user))
 
 
 def _to_user_out(user: User) -> UserOut:
@@ -76,28 +58,18 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> UserOut:
-    settings = get_settings()
-    last_error: Exception | None = None
-    try:
-        claims = None
-        for secret in _jwt_secret_candidates():
-            try:
-                payload = jwt.decode(
-                    credentials.credentials,
-                    secret,
-                    algorithms=[settings.jwt_algorithm],
-                )
-                claims = JWTClaims(**payload)
-                break
-            except (JWTError, ValueError) as exc:
-                last_error = exc
-        if claims is None:
-            raise last_error or ValueError("No JWT secrets configured")
-    except (JWTError, ValueError) as exc:
-        logger.warning("Token validation failed: %s", exc)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
+    session = (
+        db.query(AuthSession)
+        .filter(
+            AuthSession.token == credentials.credentials,
+            AuthSession.expires_at > datetime.now(UTC),
+        )
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    user = db.query(User).filter(User.id == claims.user_id, User.is_active.is_(True)).first()
+    user = db.query(User).filter(User.id == session.user_id, User.is_active.is_(True)).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return _to_user_out(user)
