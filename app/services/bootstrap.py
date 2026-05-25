@@ -75,21 +75,29 @@ def ensure_control_bootstrap() -> None:
 def _ensure_roles(db: Session, roles: Iterable[dict[str, object]]) -> None:
     for payload in roles:
         role = db.query(Role).filter(Role.id == payload["id"]).first()
-        if role:
+        if not role:
+            db.add(Role(**payload))
             continue
-        db.add(Role(**payload))
+        role.name = str(payload["name"])
+        role.description = str(payload["description"])
 
 
 def _ensure_demo_users(db: Session, users: Iterable[dict[str, object]]) -> None:
     password_hash = hash_password(DEMO_PASSWORD)
     for payload in users:
         user = db.query(User).filter(User.email == payload["email"]).first()
-        if user:
-            continue
-        db.add(
-            User(
-                **payload,
-                password_hash=password_hash,
-                is_active=True,
+        if not user:
+            db.add(
+                User(
+                    **payload,
+                    password_hash=password_hash,
+                    is_active=True,
+                )
             )
-        )
+            continue
+        user.company_id = int(payload["company_id"])
+        user.department_id = int(payload["department_id"])
+        user.role_id = int(payload["role_id"])
+        user.full_name = str(payload["full_name"])
+        user.password_hash = password_hash
+        user.is_active = True

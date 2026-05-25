@@ -72,7 +72,14 @@ def main() -> None:
                     """
                     INSERT INTO control.users (id, company_id, department_id, role_id, email, full_name, password_hash, is_active)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, true)
-                    ON CONFLICT (id) DO NOTHING
+                    ON CONFLICT (id) DO UPDATE SET
+                      company_id = EXCLUDED.company_id,
+                      department_id = EXCLUDED.department_id,
+                      role_id = EXCLUDED.role_id,
+                      email = EXCLUDED.email,
+                      full_name = EXCLUDED.full_name,
+                      password_hash = EXCLUDED.password_hash,
+                      is_active = EXCLUDED.is_active
                     """,
                     user,
                 )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
@@ -15,6 +16,7 @@ from app.models import User
 from app.schemas.auth import LoginRequest, TokenResponse, UserOut
 from spend_control_shared.auth import JWTClaims
 
+logger = logging.getLogger(__name__)
 pwd_context = CryptContext(schemes=["bcrypt_sha256", "bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer()
 
@@ -25,6 +27,16 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
+
+
+def _jwt_secret_candidates() -> list[str]:
+    settings = get_settings()
+    candidates: list[str] = []
+    for raw_secret in settings.jwt_secret_key.split(","):
+        secret = raw_secret.strip()
+        if secret and secret not in candidates:
+            candidates.append(secret)
+    return candidates
 
 
 def _encode_access_token(user: User) -> str:
@@ -38,7 +50,7 @@ def _encode_access_token(user: User) -> str:
         "department_id": user.department_id,
         "exp": int(expire.timestamp()),
     }
-    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    return jwt.encode(payload, _jwt_secret_candidates()[0], algorithm=settings.jwt_algorithm)
 
 
 def login_user(db: Session, payload: LoginRequest) -> TokenResponse:
@@ -65,14 +77,24 @@ def get_current_user(
     db: Session = Depends(get_db),
 ) -> UserOut:
     settings = get_settings()
+    last_error: Exception | None = None
     try:
-        payload = jwt.decode(
-            credentials.credentials,
-            settings.jwt_secret_key,
-            algorithms=[settings.jwt_algorithm],
-        )
-        claims = JWTClaims(**payload)
+        claims = None
+        for secret in _jwt_secret_candidates():
+            try:
+                payload = jwt.decode(
+                    credentials.credentials,
+                    secret,
+                    algorithms=[settings.jwt_algorithm],
+                )
+                claims = JWTClaims(**payload)
+                break
+            except (JWTError, ValueError) as exc:
+                last_error = exc
+        if claims is None:
+            raise last_error or ValueError("No JWT secrets configured")
     except (JWTError, ValueError) as exc:
+        logger.warning("Token validation failed: %s", exc)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
 
     user = db.query(User).filter(User.id == claims.user_id, User.is_active.is_(True)).first()
